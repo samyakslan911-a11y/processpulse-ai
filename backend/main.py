@@ -1,11 +1,23 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
 from backend.api.analyze import router as analyze_router
-from backend.api.stream import router as stream_router
+from backend.api.stream import router as stream_router, set_loop
 
-app = FastAPI(title="ProcessPulse AI — Lean Process Agent")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Hand the running loop to the SSE module so agent threads can push events
+    # from the moment the app is up, not from the first client connection.
+    set_loop(asyncio.get_running_loop())
+    yield
+
+
+app = FastAPI(title="ProcessPulse AI — Lean Process Agent", lifespan=lifespan)
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 

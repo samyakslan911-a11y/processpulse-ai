@@ -4,8 +4,9 @@ GET  /analyze               — list user's analyses
 GET  /analyze/{id}          — get one analysis (report + charts)
 POST /analyze/{id}/question — ask a follow-up question about the analysis
 """
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from google import genai
@@ -21,6 +22,14 @@ router = APIRouter(prefix="/analyze", tags=["analyze"])
 
 ALLOWED_TYPES = {"text/csv", "application/csv", "application/vnd.ms-excel", "text/plain"}
 MAX_SIZE_MB = 10
+
+# Bounded pool instead of one daemon thread per upload: the queue is implicit,
+# so a burst of uploads waits its turn rather than spawning unbounded threads
+# and pandas/matplotlib subprocesses.
+_executor = ThreadPoolExecutor(
+    max_workers=settings.max_concurrent_analyses,
+    thread_name_prefix="agent",
+)
 
 
 @router.post("")
@@ -49,12 +58,7 @@ async def start_analysis(
     analysis_id = analysis["id"]
     ensure_queue(analysis_id)
 
-    thread = threading.Thread(
-        target=run_process_agent,
-        args=(analysis_id, user_id, csv_bytes, filename),
-        daemon=True,
-    )
-    thread.start()
+    _executor.submit(run_process_agent, analysis_id, user_id, csv_bytes, filename)
 
     return {"analysis_id": analysis_id, "filename": filename}
 
@@ -98,7 +102,7 @@ async def ask_question(
     for attempt in range(4):
         try:
             response = client.models.generate_content(
-                model="gemini-flash-latest",
+                model=settings.gemini_model,
                 contents=[{"role": "user", "parts": [{"text": f"Contexto:\n{context}\n\nPregunta: {body.question}"}]}],
                 config=types.GenerateContentConfig(
                     system_instruction=(

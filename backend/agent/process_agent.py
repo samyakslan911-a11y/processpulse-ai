@@ -1,16 +1,16 @@
-﻿"""
-Process Agent â€” Lean AI.
+"""
+Process Agent — Lean AI.
 
 Arquitectura: Gemini 2.5 Flash + tool use (execute_python) + subprocess sandbox.
-El agente recibe un CSV de logs de producciÃ³n, decide quÃ© analizar, escribe
-cÃ³digo Python, lo ejecuta en un subprocess aislado con timeout, y produce un
-informe con KPIs, grÃ¡ficas y recomendaciones Lean.
+El agente recibe un CSV de logs de producción, decide qué analizar, escribe
+código Python, lo ejecuta en un subprocess aislado con timeout, y produce un
+informe con KPIs, gráficas y recomendaciones Lean.
 
-DecisiÃ³n de modelo: Gemini 2.5 Flash â€” ya en el stack, free tier, suficiente
+Decisión de modelo: Gemini 2.5 Flash — ya en el stack, free tier, suficiente
 para code generation con pandas/matplotlib en loop de 6 iteraciones.
 
-DecisiÃ³n de sandbox: subprocess Python con timeout=30s en lugar de E2B.
-Mismo patrÃ³n que ChatGPT Advanced Analysis en su base. El CSV y los charts
+Decisión de sandbox: subprocess Python con timeout=30s en lugar de E2B.
+Mismo patrón que ChatGPT Advanced Analysis en su base. El CSV y los charts
 se guardan en un directorio temporal que persiste durante el run del agente.
 """
 import base64
@@ -29,9 +29,9 @@ from backend.config import settings
 from backend.db.analyses import update_analysis
 from backend.api.stream import emit, ensure_queue
 
-MODEL = "gemini-2.0-flash"
+MODEL = settings.gemini_model
 MAX_ITERATIONS = 12
-EXEC_TIMEOUT = 30  # segundos por ejecuciÃ³n de cÃ³digo
+EXEC_TIMEOUT = 30  # segundos por ejecución de código
 
 SYSTEM_PROMPT = """You are a Lean manufacturing process analyst with expertise in OEE,
 waste detection (MUDA), and production optimization.
@@ -41,7 +41,7 @@ The variable `df` is pre-loaded with the CSV data (auto-detected encoding and se
 DATA_PATH contains the file path if you need to reload.
 
 YOUR PROCESS (follow this order):
-1. EXPLORE: Print df.shape, df.dtypes, df.head(), and df.columns.tolist(). This is mandatory â€” you must understand the actual structure before any analysis.
+1. EXPLORE: Print df.shape, df.dtypes, df.head(), and df.columns.tolist(). This is mandatory — you must understand the actual structure before any analysis.
 2. IDENTIFY: Based on the columns found, map them to concepts:
    - Production counts: columns with ok/good/buenas/aceptadas/piezas_ok or similar
    - Defects: columns with def/malo/rechazadas/piezas_def or similar
@@ -50,16 +50,16 @@ YOUR PROCESS (follow this order):
    - Machine/equipment: columns with maquina/machine/equipo or similar
    - Shift/turn: columns with turno/shift or similar
    - Timestamp: any date/time column
-3. COMPUTE: Calculate whatever KPIs the available columns allow. Adapt â€” if OEE columns don't exist, analyze what IS there (quality rate, throughput, trends, etc.).
+3. COMPUTE: Calculate whatever KPIs the available columns allow. Adapt — if OEE columns don't exist, analyze what IS there (quality rate, throughput, trends, etc.).
 4. VISUALIZE: Generate 1-3 relevant charts. Call plt.show() after each (captured automatically as PNG). One chart per execute_python call.
-   Chart rules (design system is pre-configured â€” do not override rcParams):
+   Chart rules (design system is pre-configured — do not override rcParams):
    - Set fig, ax = plt.subplots(figsize=(9,5)) at the start of each chart.
    - Bar charts: use ax.bar() with width=0.6, add value labels with ax.bar_label().
    - Grouped bars: use width=0.25, loop over groups.
-   - Pareto: bars left axis only â€” NEVER dual y-axis. Draw the cumulative % line as ax.plot() on the same axis, annotate the 80% threshold with ax.axhline().
+   - Pareto: bars left axis only — NEVER dual y-axis. Draw the cumulative % line as ax.plot() on the same axis, annotate the 80% threshold with ax.axhline().
    - Line charts: ax.plot() with markers='o', markersize=5.
    - Always set ax.set_title(), ax.set_xlabel(), ax.set_ylabel() in Spanish.
-   - Rotate x-labels 30Â° if more than 4 categories: ax.tick_params(axis='x', rotation=30).
+   - Rotate x-labels 30° if more than 4 categories: ax.tick_params(axis='x', rotation=30).
    - Add plt.tight_layout() before plt.show().
 5. REPORT: Write a professional enterprise markdown report WITHOUT calling execute_python.
    Use formal business Spanish. Numbers must include units. Follow this exact structure:
@@ -68,33 +68,33 @@ YOUR PROCESS (follow this order):
    3-4 sentences: total volume analyzed, overall quality rate, primary operational bottleneck,
    and the single most critical finding with its quantified impact.
 
-   ## Indicadores Clave de DesempeÃ±o
+   ## Indicadores Clave de Desempeño
    One markdown table per category found in the data. Columns: Indicador | Valor | Estado.
-   Use âœ“ for acceptable values, âš  for warning, âœ— for critical.
-   Example categories: ProducciÃ³n General, Calidad, Tiempos de Paro, DesempeÃ±o por MÃ¡quina.
+   Use ✓ for acceptable values, ⚠ for warning, ✗ for critical.
+   Example categories: Producción General, Calidad, Tiempos de Paro, Desempeño por Máquina.
 
-   ## AnÃ¡lisis de Causas Principales
+   ## Análisis de Causas Principales
    For each major problem identified: root cause using 5-Why or Ishikawa reasoning,
    quantified impact (%, minutes, units lost), affected equipment/shift/process.
    Write in complete paragraphs, not bullet points.
 
-   ## Hallazgos CrÃ­ticos
+   ## Hallazgos Críticos
    Numbered list, maximum 5. Each item:
-   **Hallazgo N â€” [TÃ­tulo breve]:** Description with specific numbers.
+   **Hallazgo N — [Título breve]:** Description with specific numbers.
    *Impacto:* Quantified business impact. *Causa identificada:* Root cause.
 
-   ## Plan de AcciÃ³n Recomendado
-   A markdown table: | AcciÃ³n | MetodologÃ­a Lean | Prioridad | Impacto Estimado |
+   ## Plan de Acción Recomendado
+   A markdown table: | Acción | Metodología Lean | Prioridad | Impacto Estimado |
    List 4-6 concrete actions referencing specific Lean tools (TPM, 5S, SMED, Poka-Yoke,
    Kaizen, Andon, etc.). Priority: Alta / Media / Baja.
 
 RULES:
-- NEVER assume column names â€” always inspect first.
+- NEVER assume column names — always inspect first.
 - If a column doesn't exist, say so and skip that metric gracefully.
 - Use Spanish for all output: chart titles, axis labels, and the final report.
 - One chart per execute_python call.
-- df is pre-loaded and ready. Each call is isolated â€” df resets to the original each call.
-- End with plain text report â€” do NOT call execute_python for the report.
+- df is pre-loaded and ready. Each call is isolated — df resets to the original each call.
+- End with plain text report — do NOT call execute_python for the report.
 - Handle NaN gracefully: use .fillna(), .dropna(), or .notna() as needed.
 """
 
@@ -106,7 +106,7 @@ def _build_tool() -> list[types.Tool]:
             description=(
                 "Execute Python code. pandas, matplotlib, numpy, scipy available. "
                 "DATA_PATH points to the CSV file. "
-                "Use plt.show() to capture charts â€” they are saved automatically."
+                "Use plt.show() to capture charts — they are saved automatically."
             ),
             parameters=types.Schema(
                 type=types.Type.OBJECT,
@@ -158,14 +158,14 @@ def _run_code(code: str, csv_path: str, chart_dir: str) -> dict:
             sns = None
         warnings.filterwarnings('ignore')
 
-        # â”€â”€ Design system: ProcessPulse dark theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Design system: ProcessPulse dark theme ───────────────────────────
         _SURFACE   = '#0D1629'
         _CANVAS    = '#060D1A'
         _GRID      = '#1A2744'
         _INK_PRI   = '#E2E8F0'
         _INK_SEC   = '#94A3B8'
         _INK_MUT   = '#64748B'
-        # Categorical palette â€” validated dark adjacent pairs (dataviz skill)
+        # Categorical palette — validated dark adjacent pairs (dataviz skill)
         _PALETTE   = ['#22D3A4','#3987e5','#d95926','#c98500','#d55181','#9085e9','#e66767']
 
         mpl.rcParams.update({{
@@ -263,7 +263,7 @@ def _run_code(code: str, csv_path: str, chart_dir: str) -> dict:
         stdout = result.stdout.strip()
         stderr = result.stderr.strip() if result.returncode != 0 else ""
     except subprocess.TimeoutExpired:
-        return {"stdout": "", "error": f"Timeout despuÃ©s de {EXEC_TIMEOUT}s", "images": []}
+        return {"stdout": "", "error": f"Timeout después de {EXEC_TIMEOUT}s", "images": []}
 
     # Collect new charts produced by this execution
     images = []
@@ -287,10 +287,13 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
         emit(analysis_id, event, json.dumps(payload))
 
     try:
-        _emit("progress", {"message": f"Iniciando anÃ¡lisis de {filename}..."})
+        # The row is created as 'pending'; it only becomes 'running' here, once a
+        # worker in the bounded pool actually picks it up.
+        update_analysis(analysis_id, {"status": "running"})
+        _emit("progress", {"message": f"Iniciando análisis de {filename}..."})
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Write CSV once â€” all subprocess executions read from this path
+            # Write CSV once — all subprocess executions read from this path
             csv_path = os.path.join(tmpdir, "data.csv")
             with open(csv_path, "wb") as f:
                 f.write(csv_bytes)
@@ -306,7 +309,7 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
             csv_preview = csv_bytes[:2000].decode("utf-8", errors="replace")
             contents: list[types.Content] = [
                 types.Content(role="user", parts=[types.Part(text=(
-                    f"Analiza este archivo de producciÃ³n: **{filename}**\n\n"
+                    f"Analiza este archivo de producción: **{filename}**\n\n"
                     f"Vista previa:\n```\n{csv_preview}\n```\n\n"
                     "Comienza explorando la estructura completa del archivo."
                 ))])
@@ -338,7 +341,7 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
                             _emit("progress", {"message": f"Cuota Gemini: esperando {wait}s antes de reintentar..."})
                             time.sleep(wait)
                             if attempt == 3:
-                                _emit("failed", {"message": "Cuota Gemini: lÃ­mite de velocidad. Espera 2 minutos e intenta de nuevo."})
+                                _emit("failed", {"message": "Cuota Gemini: límite de velocidad. Espera 2 minutos e intenta de nuevo."})
                                 update_analysis(analysis_id, {"status": "failed", "error_message": "quota"})
                                 return
                         else:
@@ -352,7 +355,7 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
 
                 fn_calls = [p for p in model_content.parts if p.function_call]
 
-                # No function calls â†’ agent finished, text = final report
+                # No function calls → agent finished, text = final report
                 if not fn_calls:
                     text_parts = [p.text for p in model_content.parts if p.text]
                     final_report = "\n\n".join(text_parts).strip()
@@ -371,7 +374,7 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
                     result = _run_code(code, csv_path, chart_dir)
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
-                    # Emit new charts â€” use matplotlib title if available
+                    # Emit new charts — use matplotlib title if available
                     chart_title = _extract_chart_title(code) or description
                     for img_b64 in result["images"]:
                         chart = {"title": chart_title, "image_b64": img_b64}
@@ -391,13 +394,13 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
                     if result["stdout"]:
                         _emit("output", {"message": result["stdout"][:500]})
                     if result["error"]:
-                        _emit("output", {"message": f"âš  Error: {result['error'][:300]}"})
+                        _emit("output", {"message": f"⚠ Error: {result['error'][:300]}"})
 
                     result_text = result["stdout"] or ""
                     if result["error"]:
                         result_text += f"\nERROR: {result['error']}"
                     if result["images"]:
-                        result_text += f"\n[{len(result['images'])} grÃ¡fica(s) generada(s)]"
+                        result_text += f"\n[{len(result['images'])} gráfica(s) generada(s)]"
 
                     fn_responses.append(types.Part(
                         function_response=types.FunctionResponse(
@@ -412,20 +415,20 @@ def run_process_agent(analysis_id: str, user_id: str, csv_bytes: bytes, filename
                 if iteration == MAX_ITERATIONS - 3:
                     _emit("progress", {"message": "Preparando informe final..."})
                     contents.append(types.Content(role="user", parts=[types.Part(text=(
-                        "Ya tienes suficientes datos y grÃ¡ficas. "
-                        "NO uses mÃ¡s herramientas. Escribe AHORA el informe final completo en markdown."
+                        "Ya tienes suficientes datos y gráficas. "
+                        "NO uses más herramientas. Escribe AHORA el informe final completo en markdown."
                     ))]))
 
         update_analysis(analysis_id, {
             "status": "done",
-            "report": final_report or "AnÃ¡lisis completado sin informe de texto.",
+            "report": final_report or "Análisis completado sin informe de texto.",
             "charts": charts,
             "agent_steps": agent_steps,
             "iterations": iterations,
         })
 
         _emit("done", {
-            "message": "AnÃ¡lisis completado",
+            "message": "Análisis completado",
             "iterations": iterations,
             "charts_count": len(charts),
         })

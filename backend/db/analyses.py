@@ -1,9 +1,14 @@
 from datetime import datetime, timezone
+from functools import lru_cache
+
 from supabase import create_client
 from backend.config import settings
 
 
+@lru_cache(maxsize=1)
 def _client():
+    """One client for the process. Rebuilding it per call meant a fresh httpx
+    connection pool (and TLS handshake) on every single query."""
     return create_client(settings.supabase_url, settings.supabase_key)
 
 
@@ -11,7 +16,9 @@ def create_analysis(user_id: str, filename: str, csv_preview: str = "") -> dict:
     r = _client().table("process_analyses").insert({
         "user_id": user_id,
         "filename": filename,
-        "status": "running",
+        # 'running' is set by the agent when a worker picks the job up; until
+        # then it may be queued behind other analyses.
+        "status": "pending",
         "csv_preview": csv_preview,
     }).execute()
     return r.data[0]
