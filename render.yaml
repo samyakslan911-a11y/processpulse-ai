@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: processpulse-ai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: CORS_ORIGINS
+        value: https://factorypulse-hub.vercel.app,http://localhost:3001
+      - key: SUPABASE_URL
+        fromSecret: SUPABASE_URL
+      - key: SUPABASE_KEY
+        fromSecret: SUPABASE_KEY
+      - key: GEMINI_API_KEY
+        fromSecret: GEMINI_API_KEY
