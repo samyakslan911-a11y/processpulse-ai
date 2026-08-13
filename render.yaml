@@ -3,14 +3,17 @@ services:
     name: processpulse-ai
     runtime: docker
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
     envVars:
       - key: APP_ENV
         value: production
       - key: CORS_ORIGINS
-        value: https://factorypulse-hub.vercel.app,http://localhost:3001
+        value: https://factorypulse-hub.vercel.app,http://localhost:3000,http://localhost:3001
+      # sync: false -> Render prompts for the value on first deploy and keeps it
+      # out of the repo. (`fromSecret` is not a field in the Blueprint spec.)
       - key: SUPABASE_URL
-        fromSecret: SUPABASE_URL
+        sync: false
       - key: SUPABASE_KEY
-        fromSecret: SUPABASE_KEY
+        sync: false
       - key: GEMINI_API_KEY
-        fromSecret: GEMINI_API_KEY
+        sync: false
